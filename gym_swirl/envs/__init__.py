@@ -1,1 +1,1 @@
-from gym_swirl.envs.activeparticles import ActiveParticles
+from gym_swirl.envs.Swirl import Swirl
