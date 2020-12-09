@@ -11,7 +11,6 @@ cossim = nn.CosineSimilarity(dim=1, eps=1e-14)
 pi = 3.1415927410125732
 
 defaults = {
-	"Delta": 67.5 * pi / 180, # rad
 	"T": 0., # s
 	"T_release": 200., # s
 	"amount": 48,
@@ -32,22 +31,11 @@ defaults = {
 class ActiveParticles(nn.Module):
 
 	def __init__(self, amount=50, spread=2, **kwargs):
+
 		super(ActiveParticles, self).__init__()
 
-		self.__dict__.update((k, torch.tensor(v)) for k, v in { **defaults, **kwargs }.items() if k in defaults)
-		self.positions = torch.normal(mean=0, std=self.diameter*spread, size=(self.amount,), dtype=torch.cfloat)
-
-		if self.random_angles:
-			self.orientations = torch.normal(mean=0, std=self.diameter*spread, size=(self.amount,), dtype=torch.cfloat)
-			self.orientations /= self.orientations.abs()
-		else:
-			self.orientations = self.positions.mean()-self.positions
-			self.orientations /= self.orientations.abs()
-			self.orientations *= torch.exp(Delta*1j)
-
-			rotational_noise = torch.normal(mean=0, std=torch.sqrt(torch.tensor(2*DR)), size=(self.amount,))
-			self.orientations *= torch.exp((rotational_noise*torch.sqrt(torch.tensor(dt)))*1.j)
-
+		settings = { **defaults, **kwargs }
+		self.__dict__.update((k, torch.tensor(v)) for k, v in settings.items() if k in defaults)
 
 
 	def save(self, basename="ap_states"):
@@ -70,32 +58,32 @@ class ActiveParticles(nn.Module):
 			print(f"Amount {self.amount}, T {self.T}, steps done: {len(self.states)}")
 
 
-	def timesteps(self, steps, betweensteps=1):
+	def timesteps(self, positions, orientations, deltas, steps, betweensteps=1):
 		""" Timestep takes several steps forward,
 			with a specified amount of steps inbetween
 		"""
+		states = []
 		for step in range(steps):
-			self.timestep(steps=betweensteps)
+			states.append(self.timestep(positions, orientations, deltas, steps=betweensteps))
+
+		return states
 
 
-	def timestep(self, steps=1):
+	def timestep(self, positions, orientations, deltas, steps=1):
 
 		for step in range(steps):
 
 			self.T += self.dt
-			translation, rotation, orientation_sums, leftturns, rightturns = self.move()
-			self.positions += translation
-			self.orientations *= rotation
-			self.solve_collisions()
+			positions, orientations, orientation_sums, leftturns, rightturns = self.forward(positions, orientations, deltas)
 
 		state_values = [
-			self.positions,
-			self.orientations,
+			positions,
+			orientations,
 			self.dt,
 			self.T,
-			self.O_R().mean(),
-			self.O_P(),
-			self.Delta,
+			self.O_R(positions, orientations).mean(),
+			self.O_P(orientations),
+			deltas,
 			self.DT,
 			self.DR,
 			self.Gamma,
@@ -127,21 +115,22 @@ class ActiveParticles(nn.Module):
 
 		return diff
 
-	def move(self):
+	def forward(self, positions, orientations, deltas):
 
-		avoid_collisions = False
+		#positions, orientations, deltas, actions = torch.split(x, (1,1,1,1))
+		amount = len(positions)
 
 		with torch.no_grad():
 
-			alldists = ActiveParticles.getdistances(self.positions)
+			alldists = ActiveParticles.getdistances(positions)
 			# TODO: clean up these matrices
 			inside_Rr = (alldists <= self.Rr).type(torch.cfloat)
-			inside_Rr -= torch.eye(self.amount, dtype=torch.cfloat) # remove own particle
+			inside_Rr -= torch.eye(amount, dtype=torch.cfloat) # remove own particle
 			inside_Ro = (alldists <= self.Ro+self.Rc).type(torch.cfloat)
 			inside_Ra = (alldists <= self.Ra+self.Rc).type(torch.cfloat)
 
 			if self.alpha < 2 * pi:
-				abs_angles_diff = ActiveParticles.get_anglediff(self.orientations.repeat(self.amount, 1).T, self.orientations).abs()
+				abs_angles_diff = ActiveParticles.get_anglediff(orientations.repeat(amount, 1).T, orientations).abs()
 				within_view = (abs_angles_diff < self.alpha).type(torch.cfloat)
 				in_front = (abs_angles_diff < pi/2).type(torch.cfloat)
 				inside_Ra = torch.where(inside_Ra.real.type(torch.bool), within_view, torch.tensor([0.+0.j]))
@@ -150,77 +139,68 @@ class ActiveParticles(nn.Module):
 
 			# repulsion
 			n_r = inside_Rr.real.sum(axis=1)
-			S = torch.mv(inside_Rr, self.positions) / torch.max(n_r, torch.tensor([1.])) - self.positions*n_r.sign() # only calc number if has neightbours
+			S = torch.mv(inside_Rr, positions) / torch.max(n_r, torch.tensor([1.])) - positions*n_r.sign() # only calc number if has neightbours
 			d = -S
 
 			# attraction
 			n_a = inside_Ra.real.sum(axis=1)
-			cms = torch.mv(inside_Ra, self.positions) / torch.max(n_a, torch.tensor([1.]))
-			Ps = cms - self.positions*n_a.sign()
+			cms = torch.mv(inside_Ra, positions) / torch.max(n_a, torch.tensor([1.]))
+			Ps = cms - positions * n_a.sign()
 
 			# orientation
-			orientation_sums = torch.mv(inside_Ro, self.orientations)
+			orientation_sums = torch.mv(inside_Ro, orientations)
 
-			leftturns = Ps*torch.exp(self.Delta*1j)
-			rightturns = Ps*torch.exp(-self.Delta*1j)
+			# find if it's to the right or left of current direction
+			# if right, go left vice versa
+			leftturns = Ps*torch.exp(deltas*1j)
+			rightturns = Ps*torch.exp(-deltas*1j)
 			if self.T >= self.T_release:
-				left_closer = cossim(torch.view_as_real(leftturns), torch.view_as_real(orientation_sums)) >= cossim(torch.view_as_real(rightturns), torch.view_as_real(orientation_sums))
+				left_closer = cossim(*map(torch.view_as_real, [leftturns, orientation_sums])) >= cossim(*map(torch.view_as_real, [rightturns, orientation_sums]))
 				best_turns = torch.where(left_closer, leftturns, rightturns)
 			else:
 				best_turns = leftturns
 
-			# find if it's to the right or left of current direction
-			# if right, go left vice versa
-			rotational_noise = torch.normal(mean=0., std=1., size=(self.amount,)) * torch.sqrt(2*self.DR)
+			rotational_noise = torch.normal(mean=0., std=1., size=(amount,)) * torch.sqrt(2*self.DR)
 
 			angle_to_target = torch.where(d.abs() > 0.,
-				ActiveParticles.get_anglediff(d, self.orientations),
-				ActiveParticles.get_anglediff(best_turns, self.orientations))
-
-			if avoid_collisions:
-
-				current_angles = self.orientations.angle()
-				current_angles += (current_angles < 0) * 2 * pi
-
-				inside_Avoidance = (alldists <= 3*self.Rc).type(torch.float) - torch.eye(self.amount)
-				# find the common center between two particles
-				inside_Avoidance_compl = ActiveParticles.getdistances(self.positions, True)#.angle()
-				take_left = ActiveParticles.get_anglediff(self.orientations.repeat(self.amount, 1).T, inside_Avoidance_compl) > 0.
-				assert take_left.shape == (self.amount, self.amount)
-				avoidance_rotation_angle = ((take_left*2-1) * inside_Avoidance).sum(dim=1).sign() * pi/2.
-				assert avoidance_rotation_angle.shape == (self.amount,), avoidance_rotation_angle.shape
-				angle_to_target += avoidance_rotation_angle
+				ActiveParticles.get_anglediff(d, orientations),
+				ActiveParticles.get_anglediff(best_turns, orientations))
 
 			rotation = torch.exp((self.dt * self.Gamma * self.DR * torch.sin(angle_to_target) + rotational_noise*torch.sqrt(self.dt))*1.j)
 
 			# translation
-			translational_noise = torch.normal(mean=0., std=1., size=(self.amount,), dtype=torch.cfloat) * torch.sqrt(2*self.DT)
-			translation = self.dt * self.velocity * self.orientations + translational_noise * torch.sqrt(self.dt)
+			translational_noise = torch.normal(mean=0., std=1., size=(amount,), dtype=torch.cfloat) * torch.sqrt(2*self.DT)
+			translation = self.dt * self.velocity * orientations + translational_noise * torch.sqrt(self.dt)
 
-		return translation, rotation, orientation_sums, leftturns, rightturns
+		positions = self.solve_collisions(positions + translation)
+		orientations *= rotation
+
+		return positions, orientations, orientation_sums, leftturns, rightturns
 
 
-	def solve_collisions(self, depth=0):
+	def solve_collisions(self, positions, depth=0):
 
-		alldists_compl = ActiveParticles.getdistances(self.positions, True)
+		alldists_compl = ActiveParticles.getdistances(positions, True)
 		alldists_abs = alldists_compl.abs()
 		all_collisions = alldists_abs <= 2*self.Rc - torch.eye(self.amount)
 		overlap_distance = 2.1*self.Rc - alldists_abs
 		# TODO why isnt this breaking for alldists_abs == 0?
 		move_distance = torch.where(all_collisions, (alldists_compl/alldists_abs) * (overlap_distance/2), torch.tensor([0.+0.j]))
-		self.positions -= move_distance.sum(dim=1)
+		positions -= move_distance.sum(dim=1)
 
 		if all_collisions.sum() and depth < 1000:
-			self.solve_collisions(depth + 1)
+			return self.solve_collisions(positions, depth + 1)
+		else:
+			return positions
 
 
-	def O_R(self):
+	def O_R(self, positions, orientations):
 
-		cm = self.positions.mean()
-		r = self.positions-cm
+		cm = positions.mean()
+		r = positions-cm
 		r /= r.abs()
 		r = F.pad(torch.view_as_real(r), pad=(0,1,0,0), mode="constant", value=0)
-		u = self.orientations / self.orientations.abs()
+		u = orientations / orientations.abs()
 		u = F.pad(torch.view_as_real(u), pad=(0,1,0,0), mode="constant", value=0)
 		e_z = torch.tensor([0,0,1], dtype=torch.float)
 
@@ -229,12 +209,12 @@ class ActiveParticles(nn.Module):
 
 	def local_O_R(self, measurement_positions):
 
-		dists = torch.cdist(measurement_positions.reshape((-1,2)), torch.view_as_real(self.positions))
+		dists = torch.cdist(measurement_positions.reshape((-1,2)), torch.view_as_real(positions))
 		exp_dists = torch.exp(-torch.abs(dists)**2/(2*self.diameter**2))
 
 		return torch.mv(exp_dists, self.O_R()) / (exp_dists.sum(axis=1) + 1e-14)
 
 
-	def O_P(self):
+	def O_P(self, orientations):
 
-		return self.orientations.sum(axis=0).abs().sum() / self.amount
+		return orientations.sum(axis=0).abs().sum() / self.amount

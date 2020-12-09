@@ -1,6 +1,7 @@
 from collections import namedtuple
 
-State = namedtuple("State", ['positions',
+State = namedtuple("State", [
+	'positions',
 	'orientations',
 	'dt',
 	'T',
