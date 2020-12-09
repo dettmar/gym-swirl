@@ -10,81 +10,45 @@ from .State import State
 cossim = nn.CosineSimilarity(dim=1, eps=1e-14)
 pi = 3.1415927410125732
 
+defaults = {
+	"Delta": 67.5 * pi / 180, # rad
+	"T": 0., # s
+	"T_release": 200., # s
+	"amount": 48,
+	"velocity": 0.5e-6, # m/s
+	"diameter": 6.3e-6, # m
+	"Rc": 6.3e-6/2, # m
+	"Rr": 8e-6, # m
+	"Ro": 25e-6, # m
+	"Ra": float("inf"), # m
+	"alpha": 225. * pi / 180, # rad
+	"DT": 0.014e-12, # m^2 s^−1
+	"DR": 0.0028, # s^−1
+	"Gamma": 25., # unitless
+	"dt": 0.2, # s
+	"random_angles": True,
+}
+
 class ActiveParticles(nn.Module):
 
-	def __init__(self, amount=100, spread=2, Delta=67.5, Rr=8e-6, Ra=float("inf"), DT=0.014e-12, DR=0.0028, Gamma=25, alpha=360., random_angles=False, dt=.2, T_release = 20.):
+	def __init__(self, amount=50, spread=2, **kwargs):
 		super(ActiveParticles, self).__init__()
-		Delta = torch.tensor(Delta * pi / 180)
-		self.T_release = T_release
-		self.amount = amount
-		self.velocity = 0.5e-6 # m/s
-		self.diameter = 6.3e-6 # m
-		self.Rc = self.diameter/2 # m
-		self.Rr = Rr # m
-		self.Ro = 25e-6 # m
-		self.Ra = Ra # m
-		self.alpha = torch.tensor(alpha * pi / 180)
 
-		positions = torch.normal(mean=0, std=self.diameter*spread, size=(amount,), dtype=torch.cfloat)
+		self.__dict__.update((k, torch.tensor(v)) for k, v in { **defaults, **kwargs }.items() if k in defaults)
+		self.positions = torch.normal(mean=0, std=self.diameter*spread, size=(self.amount,), dtype=torch.cfloat)
 
-		if random_angles:
-			orientations = torch.normal(mean=0, std=self.diameter*spread, size=(amount,), dtype=torch.cfloat)
-			orientations /= orientations.abs()
+		if self.random_angles:
+			self.orientations = torch.normal(mean=0, std=self.diameter*spread, size=(self.amount,), dtype=torch.cfloat)
+			self.orientations /= self.orientations.abs()
 		else:
-			orientations = positions.mean()-positions
-			orientations /= orientations.abs()
-			orientations *= torch.exp(Delta*1j)
+			self.orientations = self.positions.mean()-self.positions
+			self.orientations /= self.orientations.abs()
+			self.orientations *= torch.exp(Delta*1j)
 
 			rotational_noise = torch.normal(mean=0, std=torch.sqrt(torch.tensor(2*DR)), size=(self.amount,))
-			orientations *= torch.exp((rotational_noise*torch.sqrt(torch.tensor(dt)))*1.j)
-
-		self.set_states(
-			positions,
-			orientations,
-			dt,
-			torch.tensor(0.0),
-			Delta,
-			DT, DR,
-			Gamma,
-			orientations, orientations, orientations
-		)
-
-	def set_states(self, positions, orientations, dt, T, Delta, DT, DR, Gamma, orientation_sums, leftturns, rightturns, states=[], **kwargs):
-		positions = torch.tensor(positions)
-		orientations = torch.tensor(orientations)
-
-		self.amount = len(positions)
-		self.positions = torch.view_as_complex(positions) if positions.dtype is not torch.cfloat else positions
-		self.orientations = torch.view_as_complex(orientations) if orientations.dtype is not torch.cfloat else orientations
-		self.T = T # s
-		self.Delta = torch.tensor(Delta) # rad
-		self.dt = torch.tensor(dt) # s
-		self.DT = torch.tensor(DT) # m^2 s^−1
-		self.DR = torch.tensor(DR) # s^−1
-		self.states = states
-		self.Gamma = Gamma # unitless
-		self.solve_collisions()
-
-		if not states:
-			self.states = [State(self.positions.clone().detach(),
-								self.orientations.clone().detach(),
-								self.dt.clone().detach(), # TODO implement this as a class param
-								self.T.clone().detach(),
-								self.O_R().mean().clone().detach(),
-								self.O_P().clone().detach(),
-								self.Delta.clone().detach(),
-								self.DT,
-								self.DR,
-								self.Gamma,
-								orientation_sums.clone().detach(),
-								leftturns.clone().detach(),
-								rightturns.clone().detach())]
+			self.orientations *= torch.exp((rotational_noise*torch.sqrt(torch.tensor(dt)))*1.j)
 
 
-	def restart_from(self, i=0, delete_earlier_states=True):
-
-		self.set_states(states=[] if delete_earlier_states else self.states,
-						**self.states[i]._asdict())
 
 	def save(self, basename="ap_states"):
 		# TODO: store all settings
@@ -124,19 +88,23 @@ class ActiveParticles(nn.Module):
 			self.orientations *= rotation
 			self.solve_collisions()
 
-		self.states.append(State(self.positions.clone().detach(),
-								self.orientations.clone().detach(),
-								self.dt.clone().detach(),
-								self.T.clone().detach(),
-								self.O_R().mean().clone().detach(),
-								self.O_P().clone().detach(),
-								self.Delta.clone().detach(),
-								self.DT,
-								self.DR,
-								self.Gamma,
-								orientation_sums.clone().detach(),
-								leftturns.clone().detach(),
-								rightturns.clone().detach()))
+		state_values = [
+			self.positions,
+			self.orientations,
+			self.dt,
+			self.T,
+			self.O_R().mean(),
+			self.O_P(),
+			self.Delta,
+			self.DT,
+			self.DR,
+			self.Gamma,
+			orientation_sums,
+			leftturns,
+			rightturns
+		]
+
+		return State(*[x.detach().clone() for x in state_values])
 
 
 	@staticmethod
@@ -176,9 +144,9 @@ class ActiveParticles(nn.Module):
 				abs_angles_diff = ActiveParticles.get_anglediff(self.orientations.repeat(self.amount, 1).T, self.orientations).abs()
 				within_view = (abs_angles_diff < self.alpha).type(torch.cfloat)
 				in_front = (abs_angles_diff < pi/2).type(torch.cfloat)
-				inside_Ra = torch.where(inside_Ra.type(torch.bool), within_view, torch.tensor([0.+0.j]))
-				inside_Ro = torch.where(inside_Ro.type(torch.bool), within_view, torch.tensor([0.+0.j]))
-				inside_Rr = torch.where(inside_Rr.type(torch.bool), in_front, torch.tensor([0.+0.j]))
+				inside_Ra = torch.where(inside_Ra.real.type(torch.bool), within_view, torch.tensor([0.+0.j]))
+				inside_Ro = torch.where(inside_Ro.real.type(torch.bool), within_view, torch.tensor([0.+0.j]))
+				inside_Rr = torch.where(inside_Rr.real.type(torch.bool), in_front, torch.tensor([0.+0.j]))
 
 			# repulsion
 			n_r = inside_Rr.real.sum(axis=1)
@@ -262,10 +230,7 @@ class ActiveParticles(nn.Module):
 	def local_O_R(self, measurement_positions):
 
 		dists = torch.cdist(measurement_positions.reshape((-1,2)), torch.view_as_real(self.positions))
-		print("dists", dists.size(), dists)
 		exp_dists = torch.exp(-torch.abs(dists)**2/(2*self.diameter**2))
-		print("exp_dists", exp_dists.sum(), exp_dists.size(), exp_dists)
-		print("OR", self.O_R().sum(), self.O_R().size(), self.O_R())
 
 		return torch.mv(exp_dists, self.O_R()) / (exp_dists.sum(axis=1) + 1e-14)
 
