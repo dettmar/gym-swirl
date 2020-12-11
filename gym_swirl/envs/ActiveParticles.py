@@ -97,6 +97,9 @@ class ActiveParticles(nn.Module):
 
 	@staticmethod
 	def getdistances(positions, is_complex=False):
+		"""Takes a complex vector of n particles and calculates
+		a distance matrix for all inbetween distances.
+		"""
 		if is_complex:
 			return (positions.repeat(len(positions), 1).T - positions).T
 		else:
@@ -106,6 +109,9 @@ class ActiveParticles(nn.Module):
 
 	@staticmethod
 	def get_anglediff(a, b):
+		"""Takes two complex vectors and calculates the (positive or negative)
+		angle between them.
+		"""
 		aang = a.angle()
 		bang = b.angle()
 
@@ -116,7 +122,9 @@ class ActiveParticles(nn.Module):
 		return diff
 
 	def forward(self, positions, orientations, deltas):
-
+		"""Translates and rotates all particles based on three rules:
+		repulsion, attraction and orientation.
+		"""
 		#positions, orientations, deltas, actions = torch.split(x, (1,1,1,1))
 		amount = len(positions)
 
@@ -139,7 +147,7 @@ class ActiveParticles(nn.Module):
 
 			# repulsion
 			n_r = inside_Rr.real.sum(axis=1)
-			S = torch.mv(inside_Rr, positions) / torch.max(n_r, torch.tensor([1.])) - positions*n_r.sign() # only calc number if has neightbours
+			S = torch.mv(inside_Rr, positions) / torch.max(n_r, torch.tensor([1.])) - positions * n_r.sign() # only calc distance if neightbours exist
 			d = -S
 
 			# attraction
@@ -150,28 +158,28 @@ class ActiveParticles(nn.Module):
 			# orientation
 			orientation_sums = torch.mv(inside_Ro, orientations)
 
-			# find if it's to the right or left of current direction
-			# if right, go left vice versa
-			leftturns = Ps*torch.exp(deltas*1j)
-			rightturns = Ps*torch.exp(-deltas*1j)
+			# select best side
+			leftturns = Ps * torch.exp(deltas * 1j)
+			rightturns = Ps * torch.exp(-deltas * 1j)
 			if self.T >= self.T_release:
 				left_closer = cossim(*map(torch.view_as_real, [leftturns, orientation_sums])) >= cossim(*map(torch.view_as_real, [rightturns, orientation_sums]))
 				best_turns = torch.where(left_closer, leftturns, rightturns)
 			else:
 				best_turns = leftturns
 
-			rotational_noise = torch.normal(mean=0., std=1., size=(amount,)) * torch.sqrt(2*self.DR)
-
 			angle_to_target = torch.where(d.abs() > 0.,
 				ActiveParticles.get_anglediff(d, orientations),
 				ActiveParticles.get_anglediff(best_turns, orientations))
 
+			# rotation
+			rotational_noise = torch.normal(mean=0., std=1., size=(amount,)) * torch.sqrt(2*self.DR)
 			rotation = torch.exp((self.dt * self.Gamma * self.DR * torch.sin(angle_to_target) + rotational_noise*torch.sqrt(self.dt))*1.j)
 
 			# translation
 			translational_noise = torch.normal(mean=0., std=1., size=(amount,), dtype=torch.cfloat) * torch.sqrt(2*self.DT)
 			translation = self.dt * self.velocity * orientations + translational_noise * torch.sqrt(self.dt)
 
+		# apply changes
 		positions = self.solve_collisions(positions + translation)
 		orientations *= rotation
 
@@ -179,7 +187,11 @@ class ActiveParticles(nn.Module):
 
 
 	def solve_collisions(self, positions, depth=0):
-
+		"""Takes a complex vector of particle positions and
+		simultaneously translates all overlapping particles away
+		from eachother by the 1/n'th overlap distance,
+		recursively until no more overlap or max 1000 times.
+		"""
 		alldists_compl = ActiveParticles.getdistances(positions, True)
 		alldists_abs = alldists_compl.abs()
 		all_collisions = alldists_abs <= 2*self.Rc - torch.eye(self.amount)
