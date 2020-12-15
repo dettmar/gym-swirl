@@ -13,7 +13,6 @@ pi = 3.1415927410125732
 defaults = {
 	"T": 0., # s
 	"T_release": 200., # s
-	"amount": 48,
 	"velocity": 0.5e-6, # m/s
 	"diameter": 6.3e-6, # m
 	"Rc": 6.3e-6/2, # m
@@ -30,7 +29,7 @@ defaults = {
 
 class ActiveParticles(nn.Module):
 
-	def __init__(self, amount=50, spread=2, **kwargs):
+	def __init__(self, **kwargs):
 
 		super(ActiveParticles, self).__init__()
 
@@ -55,7 +54,7 @@ class ActiveParticles(nn.Module):
 			print("self", self)
 			self.states = pickle.load(f)
 			self.restart_from(restart_from_id, delete_earlier_states=delete_earlier_states)
-			print(f"Amount {self.amount}, T {self.T}, steps done: {len(self.states)}")
+			print(f"T {self.T}, steps done: {len(self.states)}")
 
 
 	def timesteps(self, positions, orientations, deltas, steps, betweensteps=1):
@@ -76,12 +75,17 @@ class ActiveParticles(nn.Module):
 			self.T += self.dt
 			positions, orientations, orientation_sums, leftturns, rightturns = self.forward(positions, orientations, deltas)
 
+		if deltas.numel() > 1:
+			ORs = self.local_O_R(positions, positions, orientations)
+		else:
+			ORs = self.O_R(positions, orientations).mean()
+
 		state_values = [
 			positions,
 			orientations,
 			self.dt,
 			self.T,
-			self.O_R(positions, orientations).mean(),
+			ORs,
 			self.O_P(orientations),
 			deltas,
 			self.DT,
@@ -194,7 +198,7 @@ class ActiveParticles(nn.Module):
 		"""
 		alldists_compl = ActiveParticles.getdistances(positions, True)
 		alldists_abs = alldists_compl.abs()
-		all_collisions = alldists_abs <= 2*self.Rc - torch.eye(self.amount)
+		all_collisions = alldists_abs <= 2*self.Rc - torch.eye(len(alldists_abs))
 		overlap_distance = 2.1*self.Rc - alldists_abs
 		# TODO why isnt this breaking for alldists_abs == 0?
 		move_distance = torch.where(all_collisions, (alldists_compl/alldists_abs) * (overlap_distance/2), torch.tensor([0.+0.j]))
@@ -219,14 +223,14 @@ class ActiveParticles(nn.Module):
 		return torch.mv(torch.cross(r, u), e_z)
 
 
-	def local_O_R(self, measurement_positions):
+	def local_O_R(self, measurement_positions, positions, orientations):
 
-		dists = torch.cdist(measurement_positions.reshape((-1,2)), torch.view_as_real(positions))
-		exp_dists = torch.exp(-torch.abs(dists)**2/(2*self.diameter**2))
+		dists = torch.cdist(torch.view_as_real(measurement_positions), torch.view_as_real(positions))
+		exp_dists = torch.exp(-dists.abs() ** 2 / (2 * self.diameter ** 2))
 
-		return torch.mv(exp_dists, self.O_R()) / (exp_dists.sum(axis=1) + 1e-14)
+		return torch.mv(exp_dists, self.O_R(positions, orientations)) / (exp_dists.sum(axis=1) + 1e-14)
 
 
 	def O_P(self, orientations):
 
-		return orientations.sum(axis=0).abs().sum() / self.amount
+		return orientations.sum(axis=0).abs().sum() / len(orientations)
