@@ -19,7 +19,7 @@ defaults = {
 	"Rr": 8e-6, # m
 	"Ro": 25e-6, # m
 	"Ra": float("inf"), # m
-	"alpha": 225. * pi / 180, # rad
+	"alpha": 360. * pi / 180, # rad
 	"DT": 0.014e-12, # m^2 s^−1
 	"DR": 0.0028, # s^−1
 	"Gamma": 25., # unitless
@@ -141,13 +141,14 @@ class ActiveParticles(nn.Module):
 			inside_Ro = (alldists <= self.Ro+self.Rc).type(torch.cfloat)
 			inside_Ra = (alldists <= self.Ra+self.Rc).type(torch.cfloat)
 
+			abs_angles_diff = ActiveParticles.get_anglediff(orientations.repeat(amount, 1).T, orientations).abs()
+			in_front = (abs_angles_diff < pi/2).type(torch.cfloat)
+			inside_Rr = torch.where(inside_Rr.real.type(torch.bool), in_front, torch.tensor([0.+0.j]))
+
 			if self.alpha < 2 * pi:
-				abs_angles_diff = ActiveParticles.get_anglediff(orientations.repeat(amount, 1).T, orientations).abs()
 				within_view = (abs_angles_diff < self.alpha).type(torch.cfloat)
-				in_front = (abs_angles_diff < pi/2).type(torch.cfloat)
 				inside_Ra = torch.where(inside_Ra.real.type(torch.bool), within_view, torch.tensor([0.+0.j]))
 				inside_Ro = torch.where(inside_Ro.real.type(torch.bool), within_view, torch.tensor([0.+0.j]))
-				inside_Rr = torch.where(inside_Rr.real.type(torch.bool), in_front, torch.tensor([0.+0.j]))
 
 			# repulsion
 			n_r = inside_Rr.real.sum(axis=1)

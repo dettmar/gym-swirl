@@ -38,7 +38,6 @@ class Swirl(gym.Env):
 		self.orientations /= self.orientations.abs()
 		self.deltas = torch.tensor(settings["Delta"]) # torch.ones(self.amount) *
 		self.aps = ActiveParticles(**kwargs)
-		print("self.deltas set", self.deltas)
 		self.states = []
 
 
