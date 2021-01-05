@@ -61,9 +61,10 @@ class ActiveParticles(nn.Module):
 		""" Timestep takes several steps forward,
 			with a specified amount of steps inbetween
 		"""
-		states = []
-		for step in range(steps):
-			states.append(self.timestep(positions, orientations, deltas, steps=betweensteps))
+		states = [self.timestep(positions, orientations, deltas, steps=betweensteps)]
+		for step in range(steps-1):
+			state = states[-1]
+			states.append(self.timestep(state.positions, state.orientations, state.Delta, steps=betweensteps))
 
 		return states
 
