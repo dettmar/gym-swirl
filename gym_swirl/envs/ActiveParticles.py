@@ -37,26 +37,6 @@ class ActiveParticles(nn.Module):
 		self.__dict__.update((k, torch.tensor(v)) for k, v in settings.items() if k in defaults)
 
 
-	def save(self, basename="ap_states"):
-		# TODO: store all settings
-		filename = f"runs/{basename}_{datetime.now().strftime('%Y%m%d-%H%M%S')}.pkl"
-		print(f"Storing progress as {filename}")
-		with open(filename, "wb") as f:
-			pickle.dump(self.states, f)
-
-		return filename
-
-
-	def load(self, filename, restart_from_id=-1, delete_earlier_states=False):
-		# TODO: load all settings from here
-		print(f"Loading progress as {filename}")
-		with open(filename, "rb") as f:
-			print("self", self)
-			self.states = pickle.load(f)
-			self.restart_from(restart_from_id, delete_earlier_states=delete_earlier_states)
-			print(f"T {self.T}, steps done: {len(self.states)}")
-
-
 	def timesteps(self, positions, orientations, deltas, steps, betweensteps=1):
 		""" Timestep takes several steps forward,
 			with a specified amount of steps inbetween
