@@ -85,7 +85,7 @@ class Animator:
 		self.attraction_radius.set_offsets(torch.view_as_real(state.positions))
 		self.cm.set_offsets(torch.view_as_real(state.positions).mean(axis=0))
 
-		self.ax.set_title(f"$O_R$ = {state.O_R:.2f}, $O_P$ = {state.O_P.sum():.2f}, T = {state.T:.1f}s, $\Delta$ = {int(state.Delta * 180 / 3.1415926536)} $^\circ$, $\sigma_{{DT}}$ = {state.DT:.2e} $m^2 s^{{−1}}$ $\sigma_{{DR}}$ = {state.DR:.2e} $s^{{−1}}$")
+		self.ax.set_title(f"$O_R$ = {state.O_R.mean(dim=0):.2f}, $O_P$ = {state.O_P.sum():.2f}, T = {state.T:.1f}s, $\Delta$ = {int(state.Deltas.mean().item() * 180 / 3.1415926536)} $^\circ$, $\sigma_{{DT}}$ = {state.DT:.2e} $m^2 s^{{−1}}$ $\sigma_{{DR}}$ = {state.DR:.2e} $s^{{−1}}$")
 		median = state.positions.mean()
 		center_x, center_y = median.real, median.imag
 		if not self.lock_frame:

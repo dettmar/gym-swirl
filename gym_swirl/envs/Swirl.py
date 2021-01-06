@@ -26,21 +26,23 @@ class Swirl(gym.Env):
 
 	def step(self, actions, steps=10, betweensteps=1):
 
-		self.deltas += actions
-		states = self.aps.timesteps(self.positions, self.orientations, self.deltas, steps=steps, betweensteps=betweensteps)
+		# State is immutable and _replace returns a copy of last state
+		current_state = self.states[-1]._replace(Deltas=self.states[-1].Deltas + actions)
+		states = self.aps.timesteps(current_state, steps=steps, betweensteps=betweensteps)
 		self.states += states
 
 
 	def reset(self, **kwargs):
 
 		self.settings = { **defaults, **kwargs }
-		self.amount = self.settings["amount"]
-		self.positions = torch.normal(mean=0, std=self.settings["spread"], size=(self.amount,), dtype=torch.cfloat)
-		self.orientations = torch.normal(mean=0, std=1., size=(self.amount,), dtype=torch.cfloat)
-		self.orientations /= self.orientations.abs()
-		self.deltas = torch.tensor(self.settings["Delta"]) # torch.ones(self.amount) *
+
+		positions = torch.normal(mean=0, std=self.settings["spread"], size=(self.settings["amount"],), dtype=torch.cfloat)
+		orientations = torch.normal(mean=0, std=1., size=(self.settings["amount"],), dtype=torch.cfloat)
+		orientations /= orientations.abs()
+		Deltas = torch.tensor(self.settings["Deltas"])
+
 		self.aps = ActiveParticles(**kwargs)
-		self.states = []
+		self.states = [self.aps.state(positions, orientations, Deltas)]
 
 
 	def render(self, **kwargs):
@@ -74,8 +76,9 @@ class Swirl(gym.Env):
 			self.states = data["states"]
 			self.positions = self.states[-1].positions
 			self.orientations = self.states[-1].orientations
-			self.deltas = self.states[-1].Delta # torch.ones(self.amount) *
-			print(f"Amount particles {self.amount}, amount states: {len(self.states)}")
+			self.Deltas = self.states[-1].Deltas # torch.ones(self.amount) *
+			print(f"Amount particles {len(self.states[-1].positions)}, amount states: {len(self.states)}")
+
 
 	def close(self):
 		pass

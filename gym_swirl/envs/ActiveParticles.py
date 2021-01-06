@@ -37,38 +37,51 @@ class ActiveParticles(nn.Module):
 		self.__dict__.update((k, torch.tensor(v)) for k, v in settings.items() if k in defaults)
 
 
-	def timesteps(self, positions, orientations, deltas, steps, betweensteps=1):
+	def timesteps(self, state, steps, betweensteps=1):
 		""" Timestep takes several steps forward,
 			with a specified amount of steps inbetween
 		"""
-		states = [self.timestep(positions, orientations, deltas, steps=betweensteps)]
-		for step in range(steps-1):
-			state = states[-1]
-			states.append(self.timestep(state.positions, state.orientations, state.Delta, steps=betweensteps))
+		states = []
+		for step in range(steps):
+			state = self.timestep(state, steps=betweensteps)
+			states.append(state)
 
 		return states
 
 
-	def timestep(self, positions, orientations, deltas, steps=1):
+	def timestep(self, state, steps=1):
+
+		positions = state.positions
+		orientations = state.orientations
+		Deltas = state.Deltas
 
 		for step in range(steps):
-
 			self.T += self.dt
-			positions, orientations, orientation_sums, leftturns, rightturns = self.forward(positions, orientations, deltas)
+			# must feed in latest positions and orientations
+			positions, orientations, orientation_sums, leftturns, rightturns = self.forward(positions, orientations, Deltas)
 
-		if deltas.numel() > 1:
-			ORs = self.local_O_R(positions, positions, orientations)
-		else:
-			ORs = self.O_R(positions, orientations).mean()
+		# if state.Delta.numel() > 1:
+		# 	ORs = self.local_O_R(positions, positions, orientations)
+		# else:
+		# 	ORs = self.O_R(positions, orientations).mean()
+		return self.state(positions,
+			orientations,
+			Deltas,
+			orientation_sums,
+			leftturns,
+			rightturns)
+
+
+	def state(self, positions, orientations, Deltas, orientation_sums=torch.tensor([]), leftturns=torch.tensor([]), rightturns=torch.tensor([])):
 
 		state_values = [
 			positions,
 			orientations,
 			self.dt,
 			self.T,
-			ORs,
+			self.O_R(positions, orientations),
 			self.O_P(orientations),
-			deltas,
+			Deltas,
 			self.DT,
 			self.DR,
 			self.Gamma,
@@ -106,11 +119,11 @@ class ActiveParticles(nn.Module):
 
 		return diff
 
-	def forward(self, positions, orientations, deltas):
+	def forward(self, positions, orientations, Deltas):
 		"""Translates and rotates all particles based on three rules:
 		repulsion, attraction and orientation.
 		"""
-		#positions, orientations, deltas, actions = torch.split(x, (1,1,1,1))
+		#positions, orientations, Deltas, actions = torch.split(x, (1,1,1,1))
 		amount = len(positions)
 
 		with torch.no_grad():
@@ -145,8 +158,8 @@ class ActiveParticles(nn.Module):
 			orientation_sums = torch.mv(inside_Ro, orientations)
 
 			# select best side
-			leftturns = Ps * torch.exp(deltas * 1j)
-			rightturns = Ps * torch.exp(-deltas * 1j)
+			leftturns = Ps * torch.exp(Deltas * 1j)
+			rightturns = Ps * torch.exp(-Deltas * 1j)
 			if self.T >= self.T_release:
 				left_closer = cossim(*map(torch.view_as_real, [leftturns, orientation_sums])) >= cossim(*map(torch.view_as_real, [rightturns, orientation_sums]))
 				best_turns = torch.where(left_closer, leftturns, rightturns)
