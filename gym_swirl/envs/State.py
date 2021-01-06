@@ -7,7 +7,7 @@ State = namedtuple("State", [
 	'T',
 	'O_R',
 	'O_P',
-	'Delta',
+	'Deltas',
 	'DT',
 	'DR',
 	'Gamma',
