@@ -5,6 +5,7 @@ import torch
 #from torchdiffeq import odeint_adjoint as odeint
 
 from .ActiveParticles import ActiveParticles
+from ..animator import Animator
 
 defaults = {
 	"T": 0., # s
@@ -41,8 +42,9 @@ class Swirl(gym.Env):
 		self.states = []
 
 
-	def render(self, mode="human"):
-		pass
+	def render(self, **kwargs):
+		anim = Animator(self, **kwargs)
+		return anim.show()
 
 
 	def close(self):
