@@ -26,7 +26,10 @@ class Swirl(gym.Env):
 
 
 	def step(self, actions, steps=10, betweensteps=1):
-
+		"""Given an input action (0 meaning, no change to the Delta) which is applied
+			before all timesteps, the simulation is run for n steps (recorded)
+			with m steps in between (not recorded)
+		"""
 		# State is immutable and _replace returns a copy of last state
 		current_state = self.states[-1]._replace(Deltas=self.states[-1].Deltas + actions)
 		states = self.aps.timesteps(current_state, steps=steps, betweensteps=betweensteps)
@@ -34,7 +37,10 @@ class Swirl(gym.Env):
 
 
 	def reset(self, **kwargs):
-
+		"""Resets the environment with new keyword arguments and then
+			re-initialises the positions and orientations of the particles
+			accordingly.
+		"""
 		self.settings = { **defaults, **kwargs }
 
 		positions = torch.normal(mean=0, std=self.settings["spread"], size=(self.settings["amount"],), dtype=torch.cfloat)
@@ -47,6 +53,10 @@ class Swirl(gym.Env):
 
 
 	def render(self, filename=None, **kwargs):
+		"""Renders the animation either into a video that can be displayed
+			directly in a jupyter notebook or as a video file if filename
+			is given.
+		"""
 		anim = Animator(self, **kwargs)
 		if filename is not None:
 			return anim.store(filename)
@@ -54,6 +64,8 @@ class Swirl(gym.Env):
 
 
 	def save(self, basename="runs/run"):
+		"""Store the simulation data (list of States) to a pickle file.
+		"""
 		# TODO: store all settings
 		date = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
 		filename = f"{basename}_{date}.pkl"
@@ -71,6 +83,9 @@ class Swirl(gym.Env):
 
 
 	def load(self, filename, restart_from_id=-1, delete_earlier_states=False):
+		"""Loads a pickled list of States from disk and sets the last
+			State as the current state.
+		"""
 		# TODO: load all settings from here
 		print(f"Loading progress as {filename}")
 		with open(filename, "rb") as f:

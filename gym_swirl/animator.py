@@ -8,8 +8,9 @@ matplotlib.rcParams['animation.embed_limit'] = 2**32
 
 class Animator:
 
-	def __init__(self, env, start_frame=0, end_frame=int(1e4), lock_frame=False, show_arrows=True, scene_size=30):
-
+	def __init__(self, env, start_frame=0, end_frame=int(1e4), lock_frame=False, show_arrows=True, scene_size=15):
+		"""Initialises the animation of the current gym environment
+		"""
 		self.states = env.states
 		self.particle_diam = env.aps.diameter # m
 		self.scene_size = self.particle_diam*scene_size # m
@@ -29,7 +30,9 @@ class Animator:
 											frames=self.end_frame-self.start_frame)#,  blit=True)
 
 	def plot_init(self):
-
+		"""Initialises the animation but setting the start
+			positions and orientations of all particles
+		"""
 		state = self.states[self.start_frame]
 		decision_state = self.states[self.start_frame+1]
 		median = state.positions.mean()
@@ -56,10 +59,13 @@ class Animator:
 		return self.particles, self.orientation_radius, self.attraction_radius, self.cm#, self.annot,
 
 	def remove(self, objs):
+		"""Remove all elements of a list from the scene
+		"""
 		for x in objs: x.remove()
 
 	def update(self, i):
-
+		"""Updates the scene for the subsequent frames
+		"""
 		state = self.states[i+self.start_frame]
 		decision_state = self.states[i+self.start_frame+1]
 
@@ -92,9 +98,13 @@ class Animator:
 		return self.particles, self.orientation_radius, self.attraction_radius, self.cm#, self.annot,
 
 	def show(self):
+		"""Shows the animation as an html video
+		"""
 		return HTML(self.anim.to_jshtml())
 
 	def store(self, filename="anim"):
+		"""Stores the animation to a file on disk
+		"""
 		subfolder = "animations"
 		if not os.path.isdir(subfolder):
 			os.mkdir(subfolder)

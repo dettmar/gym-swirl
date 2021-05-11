@@ -30,7 +30,9 @@ defaults = {
 class ActiveParticles(nn.Module):
 
 	def __init__(self, **kwargs):
-
+		"""The class initiator function which takes simulation kwargs and merges
+		them with the defaults above and converts them into torch 0D-tensors
+		"""
 		super(ActiveParticles, self).__init__()
 
 		settings = { **defaults, **kwargs }
@@ -38,8 +40,10 @@ class ActiveParticles(nn.Module):
 
 
 	def timesteps(self, state, steps, betweensteps=1):
-		""" Timestep takes several steps forward,
-			with a specified amount of steps inbetween
+		""" This function takes the current state and takes as input
+			several steps forward (recorded),
+			with a specified amount of steps inbetween (not recorded)
+			and returns the recorded states.
 		"""
 		states = []
 		for step in range(steps):
@@ -50,7 +54,9 @@ class ActiveParticles(nn.Module):
 
 
 	def timestep(self, state, steps=1):
-
+		"""This function takes the current state and takes
+			n steps forward and then returns the new state
+		"""
 		positions = state.positions
 		orientations = state.orientations
 		Deltas = state.Deltas
@@ -73,7 +79,9 @@ class ActiveParticles(nn.Module):
 
 
 	def state(self, positions, orientations, Deltas, orientation_sums=torch.tensor([]), leftturns=torch.tensor([]), rightturns=torch.tensor([])):
-
+		"""This function creates a State object out of the given
+			inputs and returns it.
+		"""
 		state_values = [
 			positions,
 			orientations,
@@ -123,13 +131,11 @@ class ActiveParticles(nn.Module):
 		"""Translates and rotates all particles based on three rules:
 		repulsion, attraction and orientation.
 		"""
-		#positions, orientations, Deltas, actions = torch.split(x, (1,1,1,1))
 		amount = len(positions)
 
 		with torch.no_grad():
 
 			alldists = ActiveParticles.getdistances(positions)
-			# TODO: clean up these matrices
 			inside_Rr = (alldists <= self.Rr).type(torch.cfloat)
 			inside_Rr -= torch.eye(amount, dtype=torch.cfloat) # remove own particle
 			inside_Ro = (alldists <= self.Ro+self.Rc).type(torch.cfloat)
@@ -206,7 +212,12 @@ class ActiveParticles(nn.Module):
 
 
 	def O_R(self, positions, orientations):
+		"""Calculates the angular order parameter O_R given the
+			inputted positions and orientations.
 
+			Returns a vector of dimensions matching the positions and
+			orientations.
+		"""
 		cm = positions.mean()
 		r = positions-cm
 		r /= r.abs()
@@ -219,7 +230,11 @@ class ActiveParticles(nn.Module):
 
 
 	def local_O_R(self, measurement_positions, positions, orientations):
+		"""Calculates the angular order parameter O_R at any given
+			measurement location.
 
+			Returns a vector with the same dimension as the measurement_position
+		"""
 		dists = torch.cdist(torch.view_as_real(measurement_positions), torch.view_as_real(positions))
 		exp_dists = torch.exp(-dists.abs() ** 2 / (2 * self.diameter ** 2))
 
@@ -227,5 +242,7 @@ class ActiveParticles(nn.Module):
 
 
 	def O_P(self, orientations):
-
+		"""Calculates the orientational order (polarisation) for each
+			particle and returns it.
+		"""
 		return orientations.sum(axis=0).abs().sum() / len(orientations)
