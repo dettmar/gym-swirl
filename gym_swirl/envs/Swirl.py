@@ -1,3 +1,4 @@
+import os
 import datetime
 import pickle
 import gym
@@ -45,8 +46,10 @@ class Swirl(gym.Env):
 		self.states = [self.aps.state(positions, orientations, Deltas)]
 
 
-	def render(self, **kwargs):
+	def render(self, filename=None, **kwargs):
 		anim = Animator(self, **kwargs)
+		if filename is not None:
+			return anim.store(filename)
 		return anim.show()
 
 
@@ -59,6 +62,8 @@ class Swirl(gym.Env):
 			"settings": self.settings,
 			"states": self.states
 		}
+		if len(basename.split("/")) >= 2 and not os.path.isdir(basename.split("/")[0]):
+			os.mkdir(basename.split("/")[0])
 		with open(filename, "wb") as f:
 			pickle.dump(data, f)
 

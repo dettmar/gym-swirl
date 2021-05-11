@@ -1,3 +1,4 @@
+import os
 import torch
 import matplotlib
 import matplotlib.pyplot as plt
@@ -54,10 +55,6 @@ class Animator:
 
 		return self.particles, self.orientation_radius, self.attraction_radius, self.cm#, self.annot,
 
-	def complex2vec(self, comp, norm=False):
-		if norm: comp /= np.absolute(comp)
-		return np.array([comp.real, comp.imag])
-
 	def remove(self, objs):
 		for x in objs: x.remove()
 
@@ -98,7 +95,12 @@ class Animator:
 		return HTML(self.anim.to_jshtml())
 
 	def store(self, filename="anim"):
-		self.anim.save(f"animations/{filename}.mp4", fps=10, extra_args=['-vcodec', 'libx264'])
+		subfolder = "animations"
+		if not os.path.isdir(subfolder):
+			os.mkdir(subfolder)
+		full_filename = f"{subfolder}/{filename}.mp4"
+		self.anim.save(full_filename, fps=10, extra_args=['-vcodec', 'libx264'])
+		return full_filename
 
 
 if __name__ == "__main__":
