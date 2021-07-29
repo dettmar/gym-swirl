@@ -1,10 +1,6 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
-import pickle
-from datetime import datetime
-from scipy.spatial.distance import squareform
 from .State import State
 
 cossim = nn.CosineSimilarity(dim=1, eps=1e-14)
@@ -27,12 +23,13 @@ defaults = {
 	"random_angles": True,
 }
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print("Found device AP", device)
+
 class ActiveParticles(nn.Module):
 
 	def __init__(self, **kwargs):
-		"""The class initiator function which takes simulation kwargs and merges
-		them with the defaults above and converts them into torch 0D-tensors
-		"""
+
 		super(ActiveParticles, self).__init__()
 
 		settings = { **defaults, **kwargs }
@@ -40,10 +37,8 @@ class ActiveParticles(nn.Module):
 
 
 	def timesteps(self, state, steps, betweensteps=1):
-		""" This function takes the current state and takes as input
-			several steps forward (recorded),
-			with a specified amount of steps inbetween (not recorded)
-			and returns the recorded states.
+		""" Timestep takes several steps forward,
+			with a specified amount of steps inbetween
 		"""
 		states = []
 		for step in range(steps):
@@ -54,9 +49,7 @@ class ActiveParticles(nn.Module):
 
 
 	def timestep(self, state, steps=1):
-		"""This function takes the current state and takes
-			n steps forward and then returns the new state
-		"""
+
 		positions = state.positions
 		orientations = state.orientations
 		Deltas = state.Deltas
@@ -66,10 +59,6 @@ class ActiveParticles(nn.Module):
 			# must feed in latest positions and orientations
 			positions, orientations, orientation_sums, leftturns, rightturns = self.forward(positions, orientations, Deltas)
 
-		# if state.Delta.numel() > 1:
-		# 	ORs = self.local_O_R(positions, positions, orientations)
-		# else:
-		# 	ORs = self.O_R(positions, orientations).mean()
 		return self.state(positions,
 			orientations,
 			Deltas,
@@ -79,9 +68,7 @@ class ActiveParticles(nn.Module):
 
 
 	def state(self, positions, orientations, Deltas, orientation_sums=torch.tensor([]), leftturns=torch.tensor([]), rightturns=torch.tensor([])):
-		"""This function creates a State object out of the given
-			inputs and returns it.
-		"""
+
 		state_values = [
 			positions,
 			orientations,
@@ -106,11 +93,9 @@ class ActiveParticles(nn.Module):
 		"""Takes a complex vector of n particles and calculates
 		a distance matrix for all inbetween distances.
 		"""
-		if is_complex:
-			return (positions.repeat(len(positions), 1).T - positions).T
-		else:
-			absdists = F.pdist(torch.view_as_real(positions))
-			return torch.tensor(squareform(absdists))
+		positions_matrix = positions.repeat(len(positions), 1)
+		compl_dists = positions_matrix - positions_matrix.T
+		return compl_dists if is_complex else compl_dists.abs()
 
 
 	@staticmethod
@@ -131,17 +116,19 @@ class ActiveParticles(nn.Module):
 		"""Translates and rotates all particles based on three rules:
 		repulsion, attraction and orientation.
 		"""
+		#positions, orientations, Deltas, actions = torch.split(x, (1,1,1,1))
 		amount = len(positions)
 
 		with torch.no_grad():
 
-			alldists = ActiveParticles.getdistances(positions)
+			alldist_dirs = ActiveParticles.getdistances(positions, is_complex=True)
+			alldists = alldist_dirs.abs()
 			inside_Rr = (alldists <= self.Rr).type(torch.cfloat)
 			inside_Rr -= torch.eye(amount, dtype=torch.cfloat) # remove own particle
 			inside_Ro = (alldists <= self.Ro+self.Rc).type(torch.cfloat)
 			inside_Ra = (alldists <= self.Ra+self.Rc).type(torch.cfloat)
 
-			abs_angles_diff = ActiveParticles.get_anglediff(orientations.repeat(amount, 1).T, orientations).abs()
+			abs_angles_diff = ActiveParticles.get_anglediff(alldist_dirs, orientations.repeat(len(orientations), 1))
 			in_front = (abs_angles_diff < pi/2).type(torch.cfloat)
 			inside_Rr = torch.where(inside_Rr.real.type(torch.bool), in_front, torch.tensor([0.+0.j]))
 
@@ -170,7 +157,7 @@ class ActiveParticles(nn.Module):
 				left_closer = cossim(*map(torch.view_as_real, [leftturns, orientation_sums])) >= cossim(*map(torch.view_as_real, [rightturns, orientation_sums]))
 				best_turns = torch.where(left_closer, leftturns, rightturns)
 			else:
-				best_turns = leftturns
+				best_turns = rightturns
 
 			angle_to_target = torch.where(d.abs() > 0.,
 				ActiveParticles.get_anglediff(d, orientations),
@@ -212,12 +199,7 @@ class ActiveParticles(nn.Module):
 
 
 	def O_R(self, positions, orientations):
-		"""Calculates the angular order parameter O_R given the
-			inputted positions and orientations.
 
-			Returns a vector of dimensions matching the positions and
-			orientations.
-		"""
 		cm = positions.mean()
 		r = positions-cm
 		r /= r.abs()
@@ -230,11 +212,7 @@ class ActiveParticles(nn.Module):
 
 
 	def local_O_R(self, measurement_positions, positions, orientations):
-		"""Calculates the angular order parameter O_R at any given
-			measurement location.
 
-			Returns a vector with the same dimension as the measurement_position
-		"""
 		dists = torch.cdist(torch.view_as_real(measurement_positions), torch.view_as_real(positions))
 		exp_dists = torch.exp(-dists.abs() ** 2 / (2 * self.diameter ** 2))
 
@@ -242,7 +220,5 @@ class ActiveParticles(nn.Module):
 
 
 	def O_P(self, orientations):
-		"""Calculates the orientational order (polarisation) for each
-			particle and returns it.
-		"""
+
 		return orientations.sum(axis=0).abs().sum() / len(orientations)
